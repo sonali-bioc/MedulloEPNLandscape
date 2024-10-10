@@ -160,3 +160,4 @@ ggarrange(pub_plot , fetal_type_plot ,  med_subtype_plot,
           tumor_age_plot , fetal_age_plot1 ,fetal_age_plot2,
           ncol = 3 ,  nrow =3)
 dev.off()
+```
