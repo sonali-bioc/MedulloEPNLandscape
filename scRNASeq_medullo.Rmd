@@ -1,0 +1,168 @@
+---
+title: "Processing scRNASeq medulloblastoma daya"
+author: "Sonali Arora"
+date: "Feb 10, 2025"
+output:
+  html_document:
+    toc: true
+    theme: united
+---
+In this file, we process scRNASeq data from 25 medulloblastoma patients , we then do a GSVA apthways analysis showing that the same pathways are regulated at the bulk and scRNASeq level. 
+
+# Dowloading and preparing Seurat object 
+
+```{r}
+want = c("SJ516","MUV44","BCH807",
+"SJ99","SJ129","MUV41","SJ454","SJ577","MUV11",
+"SJ17","SJ917","SJ617","MUV29","BCH1205","MUV34","BCH825",
+"SJ625","MUV39","SJ723","SJ217","MUV27","BCH1031","MUV19",
+"MUV37","SJ970")
+
+type = c(rep("WNT", 5), rep("SHH-infant", 3), rep("Group3",8 ), 
+         rep("Group4", 9))
+
+
+fls  = list.files(pattern = "txt.gz")
+keep = sapply(want, function(x) grep(x, fls))
+fls = fls[keep]
+
+lst = lapply(fls, function(x) read.delim(x, header=T, stringsAsFactors=F, row.names= 1) )
+
+sampleName =  sapply(1:length(want), function(idx){
+    rep(want[idx], ncol(lst[[idx]])) 
+})
+sampleType =  sapply(1:length(want), function(idx){
+    rep(type[idx], ncol(lst[[idx]])) 
+})
+sampleName = unlist(sampleName)
+sampleType = unlist(sampleType)
+
+length(sampleName)
+length(sampleType)
+
+bigdf = do.call(cbind, lst)
+
+library(Seurat)
+library(ggpubr)
+seurat1 <- CreateSeuratObject(bigdf, assay = "RNA", min.cells = 10)
+             
+mito.genes <- grep("^MT", rownames(seurat1))
+rb.genes <- grep("^RP", rownames(seurat1))
+percent.mito <- Matrix::colSums(seurat1@assays[["RNA"]]$counts[mito.genes, ])/Matrix::colSums(seurat1@assays[["RNA"]]$counts)
+percent.rb <- Matrix::colSums(seurat1@assays[["RNA"]]$counts[rb.genes, ])/Matrix::colSums(seurat1@assays[["RNA"]]$counts)
+
+```
+# Processing the data 
+
+```{r}
+ seurat3 <- NormalizeData(seurat1)
+ seurat3 <- FindVariableFeatures(seurat3, selection.method = "vst", nfeatures = 2000)
+ seurat3 <- ScaleData(seurat3)
+ seurat3 <- RunPCA(seurat3)
+ seurat3 <- RunUMAP(seurat3, dims = 1:10)
+ seurat3 <- FindNeighbors(seurat3,dims=1:50)
+ seurat3 <- FindClusters(seurat3)
+ 
+ m1 = DimPlot(seurat3)
+ m2 = DimPlot(seurat3, group.by = "sampleName")
+ m3 = DimPlot(seurat3, group.by = "sampletype")
+```
+# Gene expression plots 
+
+In the next chunk of code, we check the gene expression of genes to see if they are regulated in the same subtype, as seen in the bulk RNASeq. 
+
+```{r}
+features = c(  "ATOH1", "SFRP1", "HHIP",  # HIGH IN SHH
+             "MYC","GABRA5", "IMPG2", # G3
+             "KCNA1","EOMES", "RBM24" )
+
+VlnPlot(seurat3, features = features)
+DotPlot(seurat3, features = features) + RotatedAxis()
+
+```
+# Gene set Variation Analysis (GSVA)
+```{r}
+gg_db <- read.gmt(file.path(extdata, "c2.cp.kegg.v7.2.symbols.gmt"))
+biocarta_db <- read.gmt(file.path(extdata, "c2.cp.biocarta.v7.2.symbols.gmt"))
+reactome_db <- read.gmt(file.path(extdata, "c2.cp.reactome.v7.2.symbols.gmt"))
+
+kegg_lst= split(kegg_db, kegg_db[,1])
+kegg_lst = lapply(kegg_lst, function(x) x[,2])
+
+biocarta_lst= split(biocarta_db, biocarta_db[,1])
+biocarta_lst = lapply(biocarta_lst, function(x) x[,2])
+
+reactome_lst= split(reactome_db, reactome_db[,1])
+reactome_lst = lapply(reactome_lst, function(x) x[,2])
+
+# do for each subtype
+
+avg_exp = AverageExpression(object = seurat3, add.ident="sampletype")
+avg_exp = avg_exp[[1]] # non-log values
+log2_avg_exp = log2(avg_exp +1) # log values.
+log2_avg_exp = as.matrix(log2_avg_exp)
+
+gsva.par <- gsvaParam(log2_avg_exp, kegg_lst,  maxDiff = TRUE)
+kegg_res2 <- gsva(gsva.par)
+gsva.par <- gsvaParam(log2_avg_exp, biocarta_lst,  maxDiff = TRUE)
+biocarta_res2 <- gsva(gsva.par)
+gsva.par <- gsvaParam(log2_avg_exp,  reactome_lst,  maxDiff = TRUE)
+reactome_res2<- gsva(gsva.par)
+
+## shh main figure & #g3 / g4  main fig 4
+chosen_pathways = c("GLI_PROTEINS_BIND_PROMOTERS", 
+                    "RUNX3_REGULATES_YAP1_MEDIATED", 
+                    "KEGG_RIBOSOME", 
+                    "BIOCARTA_BLYMPHOCYTE_PATHWAY", 
+                    "REGULATION_OF_PROTEIN_KINASE_C_ACTIVITY", 
+                    "REGULATION_OF_T_CELL_ACTIVATION_VIA_T_CELL", 
+                    
+                    "GO_POSITIVE_REGULATION_OF_VASCULAR_WOUND_HEA", 
+                    "GO_REGULATION_OF_COMPLEMENT_ACTIVATION", 
+                    "GO_HOMOSERINE_METABOLIC_PROCESS", 
+                    "REACTOME_RUNX2_REGULATES_CHONDROCYTE_MATURATION",
+                    "REACTOME_RUNX1_REGULATES_TRANSCRIPTION_OF_GENES_INVOLVED_IN_INTERLEUKIN_SIGNALING",
+                    "REACTOME_NONSENSE_MEDIATED_DECAY_NMD",
+                    
+                    
+                    "REACTOME_EUKARYOTIC_TRANSLATION_ELONGATION", 
+                    "REACTOME_ACTIVATION_OF_THE_PHOTOTRANSDUCTION", 
+                    "REACTOME_ACTIVATED_NTRK2_SIGNALS_THROUGH_CDK", 
+                    "REACTOME_PRESYNAPTIC_DEPOLARIZATION_AND_CALCIUM",
+                    "REACTOME_STAT5_ACTIVATION",
+                    "REACTOME_SIGNALING_BY_KIT_IN_DISEASE", 
+                    
+                    "BIOCARTA_TERT_PATHWAY", 
+                    "BIOCARTA_WNT_LRP6_PATHWAY",
+                    "GO_REGULATION_OF_SMAD_PROTEIN_COMPLEX_ASSEMBLY",
+                    "GO_REGULATION_OF_VOLTAGE_GATED_POTASSIUM", 
+                    "GO_REGULATION_OF_INTERLEUKIN_6_MEDIATED_SIGNALING_PATHWAY",
+                    "REACTOME_SIGNALING_BY_LEPTIN", 
+                    "BIOCARTA_IL22BP_PATHWAY", 
+                    "REACTOME_NTRK2_ACTIVATES_RAC1",
+                    "GO_HISTONE_H3_K27_TRIMETHYLATION")
+
+score_by_subtype = rbind( reactome_res2, kegg_res2, biocarta_res2)
+saveRDS(score_by_subtype, "score_by_subtype_2031path.rds")
+
+idx = sapply(chosen_pathways, function(x) grep(x, rownames(score_by_subtype)) )
+unlist(idx)
+
+
+coldata = data.frame(sampleName = want, sampletype = type)
+coldata$name = apply(coldata, 1, function(x) paste0(x["sampletype"], "_", x["sampleName"]))
+rownames(coldata) = coldata$name
+coldata = coldata[ colnames(score_by_patient), ]
+
+library(pheatmap)
+myres = score_by_subtype[unlist(idx), -1 ]
+colnames(myres) = c("SHH-infant", "Group3", "Group4")
+rownames(myres) = gsub("REACTOME|KEGG|BIOCARTA", "", rownames(myres))
+rownames(myres)  = gsub("_", " ", rownames(myres))
+
+pdf("pathway_heatmap.pdf", width = 12)
+pheatmap(myres, scale = "none")
+dev.off()
+
+```                
+     
